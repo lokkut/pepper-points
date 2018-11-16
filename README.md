@@ -67,7 +67,7 @@ Currently we have the Aim Aggregate and Tapping Strain. There are 4 stages to ca
 
 This produces quite large varying results, so we simply smooth by applying the average of the values from objects either side. Currently it's set to use 13, 6 objects from either side to smooth over. It then uses a secondary smoothing filter.
 
-> n = v.SmoothValue + 1;
+> n = v.SmoothValue + 1;  
 > Value = LastCircle.WeightedValue - (LastCircle.WeightedValue / n^Weighting.Generic.SmoothingPower) + n;
 
 This effectively requires harder sections to be more strainful for longer to maintain their strain.

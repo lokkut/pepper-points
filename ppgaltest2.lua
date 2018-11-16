@@ -35,13 +35,14 @@ local Weighting = {
 		SmoothingPower = 2; -- uses to weight the moving average
 		ConfidencePower = 2; -- Used to determien how many objects are used to calculate the variance
 		ConfidenceScale = 15; -- ditto
-		ConfidenceCap = 0.85; -- used to determine the largest confidence variance value allowed to determine 
+		ConfidenceCap = 1.5; -- used to determine the largest confidence variance value allowed
+		ConfidenceVariancePower = 4; 
 	};
 	Aim = {
 		Circles = {
 			Scale = 10000;
-			TimingPower = 4;
-			PrecisionPower = 3;
+			TimingPower = 3;
+			PrecisionPower = 1.5;
 			Aggregate = 0.3;
 			};
 		Spinners = {
@@ -276,7 +277,7 @@ local Calculations = {
 				
 				local X2C = (X2/Count);
 				local Average = (X/Count);
-				local Variance = math.sqrt( X2C - (Average^2) );
+				local Variance = ( X2C - (Average^2) )^(1/Weighting.Generic.ConfidenceVariancePower);
 				v.Confidence = Variance;
 		
 				if( GraphData )then

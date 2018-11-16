@@ -32,14 +32,10 @@ end
 local Weighting = {
 	Aim = {
 		Circles = {
-			--[[MinAcc = 1;
-			CoverTime = 100;
-			Angle = 10000000;
-			AngleScale = 4;
-			AnglePower = 3;
-			AngleLog = 2;
-			TotalLog = 5;
-			AngleSpike = 1;]]
+			Scale = 10000;
+			TimingPower = 4;
+			PrecisionPower = 3;
+			Aggregate = 0.3;
 			};
 		Spinners = {
 			KEKSpinnersLUL = 0;
@@ -47,6 +43,11 @@ local Weighting = {
 		};
 	Focus = {
 		NoteDensity = 1;
+		};
+	Strain = {
+		ScalePower = 3;
+		RatioPower = 0.8;
+		ReductionPower = 3;
 		};
 	RhythmComplexity = {
 		Length = 1000;
@@ -179,7 +180,7 @@ local Calculations = {
 					
 					local Timing = ExTiming + EnTiming;
 					
-					local Weight = 10000 / ( Timing^4 * v.AimAngle ^ 3 )
+					local Weight = Weighting.Aim.Circles.Scale / ( (Timing^Weighting.Aim.Circles.TimingPower) * (v.AimAngle ^ Weighting.Aim.Circles.PrecisionPower) )
 					--(Weighting.Aim.Circles.AngleSpike * Weighting.Aim.Circles.AngleScale * v.AimAngle / math.log( Weighting.Aim.Circles.TotalLog );				
 					--print( Weight .. " : " .. v.AimAngle );
 					--print( (v.ExitTime or v.EnterTime) .. " : ".. (v.EnterTime or v.ExitTime) .. " : " .. i );			
@@ -189,10 +190,12 @@ local Calculations = {
 					local TDiff = v.Time - lt.Time;
 					Weight = Weight / TDiff;
 					
-					Weight = Weight ^ .3;
+					Weight = Weight ^ Weighting.Aim.Circles.Aggregate;
 					v.AimAggregate = Weight;
 					Total = Total + Weight;
 					--print( Total / i );
+				else
+					v.AimAggregate = 0;
 				end
 				lt = v;				
 				if( GraphData )then
@@ -202,6 +205,55 @@ local Calculations = {
 			end
 			return Total / #Circles;
 		end;
+	Total = function( map, GraphData )
+			local Circles = map.Objects;
+			local Total = 0;
+			for i, v in ipairs( Circles ) do
+				local Value = v.AimAggregate * ( v.Strain ^ Weighting.Strain.RatioPower );
+				Total = Total + Value;
+				v.Value = Value;
+				if( GraphData )then
+					if( not GraphData[i] ) then GraphData[i] = {}; end
+					table.insert( GraphData[i], Value );
+				end		
+			end
+			return Total / #Circles;
+		end;
+	Strain = function( map, GraphData )
+		local LastCircle;
+		local Total = 0;
+		local Count = 0;
+		for i, v in ipairs( map.Objects ) do
+			if( LastCircle )then
+				if( v.SliderTick )then
+					v.Strain = 0;
+				else	
+					local TDiff = v.Time - LastCircle.Time;
+					if( TDiff == 0 )then
+						--print( "fuck off 2b cunt" );
+						TDiff = 1;
+					end
+					if( TDiff > 1000 )then
+						v.Strain = 0;
+					else
+						local TPS = 1000 / TDiff;
+						v.Strain = LastCircle.Strain - ( LastCircle.Strain / (TPS^(1/Weighting.Strain.ReductionPower)) ) + ( TPS );
+					end
+					Total = Total + v.Strain;
+					Count = Count + 1;
+				end
+			else	
+				v.Strain = 0;
+				Count = Count + 1;
+			end
+			if( GraphData )then
+				if( not GraphData[i] ) then GraphData[i] = {}; end
+				table.insert( GraphData[i], v.Strain or 0 );
+			end		
+			LastCircle = not v.SliderTick and v or not LastCircle and v or LastCircle;
+		end
+		return Total / Count;
+	end;
 	AimTiming = function( map, GraphData )
 			local LastCircle = nil;
 			local Circles = map.Objects;
@@ -371,9 +423,11 @@ function ReadMap( Path, Mods )
 	BaseValues.AimAngle = Calculations.AimAngle( Result, GraphData );
 	BaseValues.AimTiming = Calculations.AimTiming( Result, GraphData );
 	BaseValues.AimAggregate = Calculations.AimAggregate( Result, GraphData );
+	BaseValues.Strain = Calculations.Strain( Result, GraphData );
+	BaseValues.TotalWeight = Calculations.Total( Result, GraphData );
 	
 	if( Graph ) then
-		Graph:write( "Time, Note Density,Rhythm Complexity,Aim Angle,Aim Timing,Aim Aggregate\n" );
+		Graph:write( "Time, Note Density,Rhythm Complexity,Aim Angle,Aim Timing,Aim Aggregate,Strain,Value\n" );
 		for i, v in ipairs( GraphData ) do
 			Graph:write( Objects[i].Time .. "," .. table.concat( v, "," ) .. "\n" );
 		end
@@ -384,7 +438,7 @@ function ReadMap( Path, Mods )
 	print( "Aim Angle(Precision): " .. BaseValues.AimAngle );
 	print( "Aim Timing(Flow?): " .. BaseValues.AimTiming );
 	print( "Aim Aggregate: " .. BaseValues.AimAggregate );
-	WriteCSV( Result.SongName, Result.DiffName, #Objects, Length, #Objects/Length * 1000, Result.ApproachRate, Result.CircleSize, BaseValues.NoteDensity, BaseValues.RhythmComplexity, BaseValues.AimAngle, BaseValues.AimTiming, BaseValues.AimAggregate );
+	WriteCSV( Result.SongName, Result.DiffName, #Objects, Length, #Objects/Length * 1000, Result.ApproachRate, Result.CircleSize, BaseValues.NoteDensity, BaseValues.RhythmComplexity, BaseValues.AimAngle, BaseValues.AimTiming, BaseValues.AimAggregate, BaseValues.Strain, BaseValues.TotalWeight );
 
 	if( Graph and Graph:close()) then end
 	return Result;
@@ -415,7 +469,7 @@ local Paths = {
 
 }
 
-WriteCSV( "Song Name,Diff Name,Circle Count,Length,Unweighted density,Approach Rate,Circle Size,Note Density,Rhythm Complexity (and sort of speed aswell?),Average Aim Angle,Average Aim Timing,Average Aim" );
+WriteCSV( "Song Name,Diff Name,Circle Count,Length,Unweighted density,Approach Rate,Circle Size,Note Density,Rhythm Complexity (and sort of speed aswell?),Average Aim Angle,Average Aim Timing,Average Aim,Tap Strain,Total Weight" );
 for i, FilePath in ipairs( Paths ) do
 	
 	print( "----------------------------------" );

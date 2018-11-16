@@ -33,7 +33,7 @@ Sub categories as follow:
     >p = f(rhythm complexity);    
     >Value = g( p / Max( UR, p )  );
   * Strain
-    * Since speed is quite literally a binary, "Can I hit that speed?", It is the total strain required which is the issue. Speed is also inherently weighted into rhythm complexity, since higher BPM will have larger changes, increasing variance.
+    * Since speed is quite literally a binary, "Can I hit that speed?", It is the total strain required which is the issue. However arguably strain increases with speed so it's somewhat involved anyway.
 * Reading - uncertain, difficult due to relatively subjective view point
   * Spacing
     * Variance in spacing of notes currently on screen - this may over-weight spacing variant streams, but i doubt it
@@ -48,11 +48,34 @@ Little breakdown of calculations - feel free to make me look like an idiot:
     * Used to calculate both entry and exit timing. 
 * Angle of Approach
     > atan2( CircleRadius, Distance );
-* Strain
-    * Notes per second is estimated by time from previous note. This is an exponential number, so log it or whatever.
+* Tapping Strain
+    * Notes per second is estimated by time from previous note. 
     * Reduction Power is used to increase drop off, going from 1/4 to 1/2 could previously take a while to reflect in the strain. Weighting currently tuned to speed that up.
     > Strain = PreviousCircle.Strain - ( PreviousCircle.Strain / ( NotesPerSecond ^ Weighting.Strain.ReductionPower ) ) + NotesPerSecond
+    * Currently calculated wrong for slider ticks, just defaults to 0. Is there strain for a slider tick?
+* Aim Aggregate
+    * Uses a relatively simple inverse curve. 
+    > Aggregate = (a / ( (Timing^b) * (v.AimAngle^c) ))^d
+    * b is currently 4 and c is currently 3. a is just a scale to bring it up to around 1. d is currently 0.7, but it's entirely arbitrary.
+    * This causes linear patterns to outscale jumps of a similar distance spacing. Slightly.
 * The rest to be finished.
 
-After thoughts:
-* Aim pp is scaled with combo, however acc pp is scaled entirely by acc, disregarding misses. Or at least, acc isn't scaled so deeply by combo. Frankly if you can't aim a map your accuracy will be garbage anyway. Would likely have to derank NF for this, since it may be possible to keep acc up except for the one bit of a map you can't pass.
+## Turning those relatively arbitrary values into more arbitrary values - aka. turning those values into actual pp numbers. 
+
+Currently we have the Aim Aggregate and Tapping Strain. There are 4 stages to calculating pp per note from these. The first stage is simply:
+> InitialValue = AimAggregate * ( Strain ^ Weighting.Strain.RatioPower )
+
+This produces quite large varying results, so we simply smooth by applying the average of the values from objects either side. Currently it's set to use 13, 6 objects from either side to smooth over. It then uses a secondary smoothing filter.
+
+> n = v.SmoothValue + 1;
+> Value = LastCircle.WeightedValue - (LastCircle.WeightedValue / n^Weighting.Generic.SmoothingPower) + n;
+
+This effectively requires harder sections to be more strainful for longer to maintain their strain.
+From this we then calculate a confidence value. This takes the variance of strain from a number of objects either side, and generates a confidence value. For more strenuous sections, more notes are required, similar to the previous filter. It then takes the strain of the hardest object with confidence above a certain level. Currently confidence cap is 85% of average confidence. This single number determines difficulty. (Probably shouldn't be just a single number determining it, since it can be quite cruel, will consider)
+
+## Todo
+* Implement genuinely not stupid numbers for individual statistics. 
+
+## After thoughts
+* Aim pp is scaled with combo, however acc pp is scaled entirely by acc, disregarding misses. Or at least, acc isn't scaled so deeply by combo. Frankly if you can't aim a map your accuracy will be garbage anyway. Would likely have to derank NF for this, since it may be possible to keep acc up except for the one bit of a map you can't pass
+

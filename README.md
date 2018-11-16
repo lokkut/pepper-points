@@ -43,11 +43,15 @@ Sub categories as follow:
 
 Little breakdown of calculations - feel free to make me look like an idiot:
 * Time spent over note - "Aim Timing" for simplicity
-    * Calculated from the maintainable velocity and required acceleration to reach the next circle - currently calculated wrong past .5pi rad
+    * Calculated from the maintainable velocity and required acceleration to reach the next circle - currently calculated wrong before .5pi rad
     >Time = 0.5 * CircleRadius / ( InitialSpeed + sqrt( InitialSpeed² + (2 * Acceleration * CircleRadius ) ) )
     * Used to calculate both entry and exit timing. 
 * Angle of Approach
     > atan2( CircleRadius, Distance );
+* Strain
+    * Notes per second is estimated by time from previous note. This is an exponential number, so log it or whatever.
+    * Reduction Power is used to increase drop off, going from 1/4 to 1/2 could previously take a while to reflect in the strain. Weighting currently tuned to speed that up.
+    > Strain = PreviousCircle.Strain - ( PreviousCircle.Strain / ( NotesPerSecond ^ Weighting.Strain.ReductionPower ) ) + NotesPerSecond
 * The rest to be finished.
 
 After thoughts:

@@ -30,6 +30,13 @@ local _iter = function(a, i)
 end   
 
 local Weighting = {
+	Generic = {
+		Smoothing = 6; -- values from either side to smooth in
+		SmoothingPower = 2; -- uses to weight the moving average
+		ConfidencePower = 2; -- Used to determien how many objects are used to calculate the variance
+		ConfidenceScale = 15; -- ditto
+		ConfidenceCap = 0.85; -- used to determine the largest confidence variance value allowed to determine 
+	};
 	Aim = {
 		Circles = {
 			Scale = 10000;
@@ -46,7 +53,7 @@ local Weighting = {
 		};
 	Strain = {
 		ScalePower = 3;
-		RatioPower = 0.8;
+		RatioPower = 0.5;
 		ReductionPower = 3;
 		};
 	RhythmComplexity = {
@@ -54,7 +61,7 @@ local Weighting = {
 		BPMScaler = 600;
 		};
 	Reading = {
-	
+		
 		};
 	Acc = {
 	
@@ -116,7 +123,7 @@ local Calculations = {
 					end
 
 					if( C ~= 0 ) then
-						local A = n / C;
+						local A = (n / C)^2;
 						local X = n2 / C;
 						local V = X - A;
 						Count = Count + C;
@@ -210,14 +217,94 @@ local Calculations = {
 			local Total = 0;
 			for i, v in ipairs( Circles ) do
 				local Value = v.AimAggregate * ( v.Strain ^ Weighting.Strain.RatioPower );
-				Total = Total + Value;
-				v.Value = Value;
+				v.InitialValue = Value;
 				if( GraphData )then
 					if( not GraphData[i] ) then GraphData[i] = {}; end
 					table.insert( GraphData[i], Value );
 				end		
 			end
-			return Total / #Circles;
+			-- smooth
+			for i, v in ipairs( Circles ) do
+				local Value = 0;
+				for j = i - Weighting.Generic.Smoothing, i + Weighting.Generic.Smoothing do
+					if( Circles[j] )then
+						Value = Value + Circles[j].InitialValue;
+					end
+				end
+				Value = Value / ( 1 + Weighting.Generic.Smoothing * 2 );
+				v.SmoothValue = Value;
+				if( GraphData )then
+					if( not GraphData[i] ) then GraphData[i] = {}; end
+					table.insert( GraphData[i], Value );
+				end		
+			end
+			-- moving average
+			local LastCircle;
+			for i, v in ipairs( Circles ) do				
+				if( LastCircle )then
+					local n = v.SmoothValue + 1;
+					local V = LastCircle.WeightedValue - ( LastCircle.WeightedValue / n^Weighting.Generic.SmoothingPower) + n;
+					v.WeightedValue = V;
+				else	
+					-- treated as if the last value was 0
+					v.WeightedValue = v.SmoothValue + 1;
+				end
+				Total = Total + (v.WeightedValue^2);
+				v.CalculatedWeight = (v.WeightedValue^(1/(Weighting.Generic.SmoothingPower+1) ))-1;
+				if( GraphData )then
+					if( not GraphData[i] ) then GraphData[i] = {}; end
+					table.insert( GraphData[i], v.CalculatedWeight );
+				end		
+				LastCircle = v;
+			end
+			local MovingAverageValue = ( Total / #Circles )^(1/(Weighting.Generic.SmoothingPower+1)) - 1;
+			-- confidence
+			Total = 0;
+			for i, v in ipairs( Circles ) do
+				local ActualWeight = v.CalculatedWeight;
+				local RequiredCount = math.ceil( Weighting.Generic.ConfidenceScale * (ActualWeight ^ Weighting.Generic.ConfidencePower) );
+				local X = 0;
+				local X2 = 0;
+				local Count = 0;
+				for j = i - RequiredCount, i + RequiredCount do
+					if( Circles[j] )then
+						Count = Count + 1;
+						X = X + Circles[j].WeightedValue;
+						X2 = X2 + (Circles[j].WeightedValue^2);
+					end
+				end
+				
+				local X2C = (X2/Count);
+				local Average = (X/Count);
+				local Variance = math.sqrt( X2C - (Average^2) );
+				v.Confidence = Variance;
+		
+				if( GraphData )then
+					if( not GraphData[i] ) then GraphData[i] = {}; end
+					table.insert( GraphData[i], v.Confidence );
+				end		
+				if( GraphData )then
+					if( not GraphData[i] ) then GraphData[i] = {}; end
+					table.insert( GraphData[i], Count );
+				end		
+				Total = Total + Variance;
+			end
+			
+			local ConfidenceCap = Weighting.Generic.ConfidenceCap * Total / #Circles;
+			-- quick run through to get the best value
+			local Value = 0;
+			for i, v in pairs( Circles ) do
+				if( v.Confidence < ConfidenceCap and v.CalculatedWeight > Value )then
+					Value = v.CalculatedWeight;
+				end
+				if( GraphData )then
+					if( not GraphData[i] ) then GraphData[i] = {}; end
+					table.insert( GraphData[i], v.Confidence < ConfidenceCap and v.CalculatedWeight or 0 );
+				end		
+
+			end
+			print( "Confidence Cap: " .. ConfidenceCap );
+			return Value;
 		end;
 	Strain = function( map, GraphData )
 		local LastCircle;
@@ -427,7 +514,7 @@ function ReadMap( Path, Mods )
 	BaseValues.TotalWeight = Calculations.Total( Result, GraphData );
 	
 	if( Graph ) then
-		Graph:write( "Time, Note Density,Rhythm Complexity,Aim Angle,Aim Timing,Aim Aggregate,Strain,Value\n" );
+		Graph:write( "Time, Note Density,Rhythm Complexity,Aim Angle,Aim Timing,Aim Aggregate,Strain,Individual Value,Smoothed Value,Value,Cheese,X\n" );
 		for i, v in ipairs( GraphData ) do
 			Graph:write( Objects[i].Time .. "," .. table.concat( v, "," ) .. "\n" );
 		end
@@ -464,8 +551,11 @@ local Paths = {
 
 "357466 ARCIEN - Future Son\\ARCIEN - Future Son (Mishima Yurara) [N A S Y A'S OK DAD].osu"; 
 "Karthy+-+Despacito+III\\Karthy - Despacito III (dt is bad) [no].osu";
+"158023 UNDEAD CORPORATION - Everything will freeze\\UNDEAD CORPORATION - Everything will freeze (Ekoro) [Time Freeze].osu";
+"383094 Franz Liszt - La Campanella (8 Bit Remix)\\Franz Liszt - La Campanella (8 Bit Remix) (Louis Cyphre) [Grande Etude].osu";
 --]]
 "586121 GYZE - HONESTY\\GYZE - HONESTY (Bibbity Bill) [DISHONEST].osu"; 
+
 
 }
 

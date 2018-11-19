@@ -1,6 +1,5 @@
-local Mods = { HT, DT, HR, EZ, HD, FL }
-
 local DoGraphs = true;
+local AllGraphing = false;
 
 local Output = io.open( "stuff.csv", "w" );
 function WriteCSV( ... )	
@@ -35,8 +34,11 @@ local Weighting = {
 		SmoothingPower = 2; -- uses to weight the moving average
 		ConfidencePower = 2; -- Used to determien how many objects are used to calculate the variance
 		ConfidenceScale = 15; -- ditto
-		ConfidenceCap = 1.5; -- used to determine the largest confidence variance value allowed
+		ConfidenceCap = 1; -- used to determine the largest confidence variance value allowed at 0 object count
+		MaxConfidenceCap = 2; -- used to determine largest confidence variance at infinite combo
+		ConfidenceObjCountScale = 1000; -- how much combo required to take u half way to next stop, cap = max - ((max-min)/(2^(combo/x)))
 		ConfidenceVariancePower = 4; 
+		TotalPower = 5; -- higher values buff spikes more i believe
 	};
 	Aim = {
 		Circles = {
@@ -168,7 +170,7 @@ local Calculations = {
 				else	
 					v.AimAngle = math.pi;--(math.log( .5 ) / math.log( Weighting.Aim.Circles.AngleLog )) * Weighting.Aim.Circles.Angle;
 				end
-				if( GraphData )then
+				if( GraphData and AllGraphing )then
 					if( not GraphData[i] ) then GraphData[i] = {};end
 					table.insert( GraphData[i], v.AimAngle );
 				end				
@@ -219,7 +221,7 @@ local Calculations = {
 			for i, v in ipairs( Circles ) do
 				local Value = v.AimAggregate * ( v.Strain ^ Weighting.Strain.RatioPower );
 				v.InitialValue = Value;
-				if( GraphData )then
+				if( GraphData and AllGraphing )then
 					if( not GraphData[i] ) then GraphData[i] = {}; end
 					table.insert( GraphData[i], Value );
 				end		
@@ -234,7 +236,7 @@ local Calculations = {
 				end
 				Value = Value / ( 1 + Weighting.Generic.Smoothing * 2 );
 				v.SmoothValue = Value;
-				if( GraphData )then
+				if( GraphData and AllGraphing )then
 					if( not GraphData[i] ) then GraphData[i] = {}; end
 					table.insert( GraphData[i], Value );
 				end		
@@ -284,26 +286,33 @@ local Calculations = {
 					if( not GraphData[i] ) then GraphData[i] = {}; end
 					table.insert( GraphData[i], v.Confidence );
 				end		
-				if( GraphData )then
+				if( GraphData and AllGraphing )then
 					if( not GraphData[i] ) then GraphData[i] = {}; end
 					table.insert( GraphData[i], Count );
 				end		
 				Total = Total + Variance;
 			end
 			
-			local ConfidenceCap = Weighting.Generic.ConfidenceCap * Total / #Circles;
+			local ConfidenceCap = Weighting.Generic.MaxConfidenceCap - ( (Weighting.Generic.MaxConfidenceCap - Weighting.Generic.ConfidenceCap) / (2^(#Circles/Weighting.Generic.ConfidenceObjCountScale)))
+			ConfidenceCap =  ConfidenceCap * Total / #Circles;
 			-- quick run through to get the best value
 			local Value = 0;
 			for i, v in pairs( Circles ) do
-				if( v.Confidence < ConfidenceCap and v.CalculatedWeight > Value )then
+				local ConfidenceWeighted = v.Confidence < ConfidenceCap and v.CalculatedWeight or ( v.CalculatedWeight * ( ConfidenceCap / v.Confidence ) )
+				Value = Value + ( 10 ^ ( ConfidenceWeighted * Weighting.Generic.TotalPower ) );
+				--[[if( v.Confidence < ConfidenceCap and v.CalculatedWeight > Value )then
 					Value = v.CalculatedWeight;
-				end
+				end]]
 				if( GraphData )then
 					if( not GraphData[i] ) then GraphData[i] = {}; end
-					table.insert( GraphData[i], v.Confidence < ConfidenceCap and v.CalculatedWeight or 0 );
+					table.insert( GraphData[i], ConfidenceWeighted );
 				end		
-
+				if( GraphData )then
+					if( not GraphData[i] ) then GraphData[i] = {}; end
+					table.insert( GraphData[i], math.log( Value ) / math.log( 10 ^ Weighting.Generic.TotalPower ) );
+				end		
 			end
+			Value = math.log( Value ) / math.log( 10 ^ Weighting.Generic.TotalPower );
 			print( "Confidence Cap: " .. ConfidenceCap );
 			return Value;
 		end;
@@ -409,7 +418,7 @@ local Calculations = {
 				else
 					v.Velocity = Vector2D.new();
 				end
-				if( GraphData )then
+				if( GraphData and AllGraphing )then
 					local Timing = (( (LastCircle or {}).ExitTime or 0 ) + ( v.EnterTime or 0 ));
 					--print(tostring(LastCircle.ExitTime ).. " : " ..tostring(v.EnterTime ) )
 					if( not GraphData[i] ) then GraphData[i] = {};end
@@ -434,7 +443,64 @@ end
 function GetMaxHitTimeFromOD( OD )
 	return 2 * ( 199.5 - ( 10 * OD ) );
 end
+
+local ModList = {
+				HR = 1, 
+				DT = 6, 
+				EZ = 3, 
+				HT = 5,
+				HD = 2,
+				FL = 4 };
+
+function CalculateActualValues( Map )
+	Map.ApproachTime = GetApproachTimeFromRate( Map.ApproachRate );
+	Map.CircleRadius = 100 - ( Map.CircleSize * 9 );
+	Map.MaxHitTime = GetMaxHitTimeFromOD( Map.OverallDifficulty );
+end
+
+function ApplySpeedChangeMod( Map, Speed )
+	Map.ApproachTime = Map.ApproachTime / 1.5;
+	Map.MaxHitTime = Map.MaxHitTime / 1.5;
+	local Circles = Map.Objects
+	for i, v in pairs( Circles ) do
+		v.Time = v.Time / Speed;
+	end
+end
+
+function ApplyDiffScaleMod( Map, Mod )
+	local Scale = 1;
+	if( Mod == ModList.HR )then
+		Scale = 1.4;
+	elseif( Mod == ModList.EZ)then
+		Scale = 0.5;
+	end
+	local NewAR = Map.ApproachRate * Scale;
+	local NewOD = Map.OverallDifficulty * Scale;
+	local NewCS = Mod == ModList.HR and Map.CircleSize * 1.3 or Map.CircleSize * Scale;
+	Map.ApproachRate = NewAR > 10 and 10 or NewAR < 0 and 0 or NewAR;
+	Map.OverallDifficulty = NewOD > 10 and 10 or NewOD < 0 and 0  or NewOD;
+	Map.CircleSize = NewCS > 10 and 10 or NewCS < 0 and 0  or NewCS;
+end
+
+function ApplyMod( Map, Mod )
+	if( Mod == ModList.HR )then
+		ApplyDiffScaleMod( Map, Mod );
+		CalculateActualValues( Map );
+		-- could flip y positions but i'm also not an idiot so i'm not going to.
+	elseif( Mod == ModList.DT )then
+		ApplySpeedChangeMod( Map, 1.5 );
+	elseif( Mod == ModList.HT )then
+		ApplySpeedChangeMod( Map, 0.75 );
+	elseif( Mod == ModList.EZ )then
+		ApplyDiffScaleMod( Map, Mod );
+		CalculateActualValues( Map );
+	elseif( Mod == ModList.FL )then
+	elseif( Mod == ModList.HD )then
+		-- sorry :(, no reading yet
 	
+	end
+end
+
 function ReadMap( Path, Mods )
 	local Map = io.open( Path );
 	assert( Map );
@@ -445,9 +511,8 @@ function ReadMap( Path, Mods )
 	local Objects = {}
 	local RawObjects = {}
 	local Timing = {}
+
 	-- read map
-
-
 	Result.ApproachRate = tonumber(MapText:match( "ApproachRate:.-([%d.]+)"));
 	Result.CircleSize = tonumber(MapText:match( "CircleSize:.-([%d.]+)"));
 	Result.OverallDifficulty = tonumber(MapText:match( "OverallDifficulty:.-([%d.]+)")); 
@@ -456,7 +521,7 @@ function ReadMap( Path, Mods )
 	Result.SongName = MapText:match( "Title:([^\n]+)");
 	Result.DiffName = MapText:match( "Version:([^\n]+)");
 
-	local Graph = DoGraphs and io.open( "graphs/" .. Result.SongName ..  "-"   ..Result.DiffName .. ".csv", "w");
+	
 
 	Result.Objects = Objects;
 	for x, y, time, type, hitsound, extras in ObjectsChunk:gmatch(("(%d+),"):rep(5).."(%S+)") do
@@ -487,19 +552,35 @@ function ReadMap( Path, Mods )
 	local function sort_f( a, b )
 		return (a.Time < b.Time) ;
 	end
-	
+
+	local xMods = ""
+	for _, v in ipairs( Mods )do
+		for nam, j in pairs( ModList ) do
+			if( j == v )then
+				xMods = xMods.. nam
+			end
+		end
+	end
+
 	print( "Name: " .. Result.SongName );
 	print( "Diff: " .. Result.DiffName );
+	print( "Mods: " .. xMods );
 	table.sort( Objects, sort_f );
 	
 	print( "Circle Count: " .. #Objects );
+
+
+	CalculateActualValues( Result );
+	-- should be DT/HT at the end so recalculations occur before speed changers
+	table.sort( Mods );
+	-- apply mods
+	for i, v in ipairs( Mods ) do
+		ApplyMod( Result, v );
+	end
+
 	local Length = Objects[#Objects].Time - Objects[1].Time;	
 	print( "Length: " .. Length );
 	Result.Length = Length;
-
-	Result.ApproachTime = GetApproachTimeFromRate( Result.ApproachRate );
-	Result.CircleRadius = 100 - ( Result.CircleSize * 9 );
-	Result.MaxHitTime = GetMaxHitTimeFromOD( Result.OverallDifficulty );
 	
 	-- get base values
 	
@@ -508,14 +589,19 @@ function ReadMap( Path, Mods )
 	local GraphData = {};
 	BaseValues.NoteDensity = Calculations.NoteDensity( Result, GraphData );
 	BaseValues.RhythmComplexity = Calculations.RhythmComplexity( Result, GraphData );
-	BaseValues.AimAngle = Calculations.AimAngle( Result, GraphData );
-	BaseValues.AimTiming = Calculations.AimTiming( Result, GraphData );
+	BaseValues.AimAngle = Calculations.AimAngle( Result, GraphData ); -- don't return anything anymore
+	BaseValues.AimTiming = Calculations.AimTiming( Result, GraphData ); -- don't return anything anymore
 	BaseValues.AimAggregate = Calculations.AimAggregate( Result, GraphData );
 	BaseValues.Strain = Calculations.Strain( Result, GraphData );
 	BaseValues.TotalWeight = Calculations.Total( Result, GraphData );
-	
+
+	local Graph = DoGraphs and io.open( "graphs/" .. Result.SongName ..  "-"   ..Result.DiffName .. "_" .. xMods .. ".csv", "w");
 	if( Graph ) then
-		Graph:write( "Time, Note Density,Rhythm Complexity,Aim Angle,Aim Timing,Aim Aggregate,Strain,Individual Value,Smoothed Value,Value,Cheese,X\n" );
+		if( AllGraphing ) then
+			Graph:write( "Time, Note Density,Rhythm Complexity,Aim Angle,Aim Timing,Aim Aggregate,Strain,Individual Value,Smoothed Value,Value,Cheese,X\n" );
+		else
+			Graph:write( "Time, Note Density,Rhythm Complexity,Aim Aggregate,Strain,Value,Doubt,Confidence Weighted,Total\n" );
+		end
 		for i, v in ipairs( GraphData ) do
 			Graph:write( Objects[i].Time .. "," .. table.concat( v, "," ) .. "\n" );
 		end
@@ -523,10 +609,10 @@ function ReadMap( Path, Mods )
 
 	print( "Note Density: " .. BaseValues.NoteDensity );
 	print( "Rhythm Complexity: " .. BaseValues.RhythmComplexity );
-	print( "Aim Angle(Precision): " .. BaseValues.AimAngle );
-	print( "Aim Timing(Flow?): " .. BaseValues.AimTiming );
+	--print( "Aim Angle(Precision): " .. BaseValues.AimAngle );
+	--print( "Aim Timing(Flow?): " .. BaseValues.AimTiming );
 	print( "Aim Aggregate: " .. BaseValues.AimAggregate );
-	WriteCSV( Result.SongName, Result.DiffName, #Objects, Length, #Objects/Length * 1000, Result.ApproachRate, Result.CircleSize, BaseValues.NoteDensity, BaseValues.RhythmComplexity, BaseValues.AimAngle, BaseValues.AimTiming, BaseValues.AimAggregate, BaseValues.Strain, BaseValues.TotalWeight );
+	WriteCSV( Result.SongName, Result.DiffName, xMods, #Objects, Length, #Objects/Length * 1000, Result.ApproachRate, Result.CircleSize, BaseValues.NoteDensity, BaseValues.RhythmComplexity, BaseValues.AimAggregate, BaseValues.Strain, BaseValues.TotalWeight );
 
 	if( Graph and Graph:close()) then end
 	return Result;
@@ -554,16 +640,28 @@ local Paths = {
 "Karthy+-+Despacito+III\\Karthy - Despacito III (dt is bad) [no].osu";
 "158023 UNDEAD CORPORATION - Everything will freeze\\UNDEAD CORPORATION - Everything will freeze (Ekoro) [Time Freeze].osu";
 "383094 Franz Liszt - La Campanella (8 Bit Remix)\\Franz Liszt - La Campanella (8 Bit Remix) (Louis Cyphre) [Grande Etude].osu";
+"842412 Will Stetson - Harumachi Clover (Swing Arrangement) [Dictate Edit]\\Will Stetson - Harumachi Clover (Swing Arrangement) [Dictate Edit] (Sotarks) [Oh no!].osu";
 --]]
 "586121 GYZE - HONESTY\\GYZE - HONESTY (Bibbity Bill) [DISHONEST].osu"; 
 
 
 }
 
-WriteCSV( "Song Name,Diff Name,Circle Count,Length,Unweighted density,Approach Rate,Circle Size,Note Density,Rhythm Complexity (and sort of speed aswell?),Average Aim Angle,Average Aim Timing,Average Aim,Tap Strain,Total Weight" );
+local ModTests = {
+	{};
+	{ ModList.HR };
+	{ ModList.DT };
+	{ ModList.EZ };
+	{ ModList.HT };
+	{ ModList.HR, ModList.DT };
+	{ ModList.HR, ModList.HT };
+}
+
+WriteCSV( "Song Name,Diff Name,Mods,Circle Count,Length,Unweighted density,Approach Rate,Circle Size,Note Density,Rhythm Complexity (and sort of speed aswell?),Aim,Tap Strain,Total Weight" );
 for i, FilePath in ipairs( Paths ) do
 	
-	print( "----------------------------------" );
-
-	local Map = ReadMap( "O:\\OsuInstall\\Songs\\"..FilePath );
+	for i, v in pairs( ModTests ) do
+		print( "----------------------------------" );
+		local Map = ReadMap( "O:\\OsuInstall\\Songs\\"..FilePath, v );
+	end
 end

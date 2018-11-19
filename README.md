@@ -28,12 +28,11 @@ Sub categories as follow:
   * Accuracy
     * Rhythm Complexity   
       * Takes the variance of estimated BPM between hit objects in (arbitrary length after note) per note and average over entire map length. 
-      * If there was any way I could apply an FFT to take the 
     * Instead of using a mapper-defined valued like OD, this will be calculated using the UR and a minimum applicable UR calculated using the Rhythm Complexity, thus any UR lower than that would be irrelevant, similar to SSing a map. However this would de-weight 1-2 jump spams, since they are not complex rhythmically. It would then most likely be calculated like
     >p = f(rhythm complexity);    
     >Value = g( p / Max( UR, p )  );
   * Strain
-    * Since speed is quite literally a binary, "Can I hit that speed?", It is the total strain required which is the issue. However arguably strain increases with speed so it's somewhat involved anyway.
+    * Since speed is quite literally a binary, "Can I hit that speed?", It is the total strain required which is the issue. However arguably strain increases with speed so it's somewhat involved anyway. Currently strain has an effective cap which is determined by the speed.
 * Reading - uncertain, difficult due to relatively subjective view point
   * Spacing
     * Variance in spacing of notes currently on screen - this may over-weight spacing variant streams, but i doubt it
@@ -71,7 +70,19 @@ This produces quite large varying results, so we simply smooth by applying the a
 > Value = LastCircle.WeightedValue - (LastCircle.WeightedValue / n^Weighting.Generic.SmoothingPower) + n;
 
 This effectively requires harder sections to be more strainful for longer to maintain their strain.
-From this we then calculate a confidence value. This takes the variance of strain from a number of objects either side, and generates a confidence value. For more strenuous sections, more notes are required, similar to the previous filter. It then takes the strain of the hardest object with confidence above a certain level. Currently confidence cap is 85% of average confidence. This single number determines difficulty. (Probably shouldn't be just a single number determining it, since it can be quite cruel, will consider)
+From this we then calculate a doubt value. This takes the variance of strain from a number of objects either side, and generates a doubt value. For more strenuous sections, more notes are required, similar to the previous filter.  
+> DoubtCap = MaxDoubtCap - ( (MaxDoubtCap - MinDoubtCap) / (2^(#Circles/DoubtObjCountScale)))  
+> DoubtCap = DoubtCap * TotalDoubt / #Circles;  
+
+Using this formula we calculate the maximum doubt value. Any values below this maintain their original weight, values above are re-weighted using:
+> NewValue = CalculatedWeight * ( DoubtCap / Doubt )  
+
+From this we then calculate the total value by applying this to all values:    
+> Total += 10 ^ ( A * NewValue );
+> FinalMapValue = log( Total ) / log( 10 ^ A );  
+
+Where A is currently 5. This applies a sort-of length bonus based on the consistent difficulty of the map. Multiple sections of similar difficulty, or one large section of a maintained difficulty, will slightly increase the total value. However it almost entirely ignores easier sections.
+
 
 ## Todo
 * Implement genuinely not stupid numbers for individual statistics. 

@@ -78,7 +78,7 @@ Using this formula we calculate the maximum doubt value. Any values below this m
 > NewValue = CalculatedWeight * ( DoubtCap / Doubt )  
 
 From this we then calculate the total value by applying this to all values:    
-> Total += 10 ^ ( A * NewValue );
+> Total += 10 ^ ( A * NewValue );  
 > FinalMapValue = log( Total ) / log( 10 ^ A );  
 
 Where A is currently 5. This applies a sort-of length bonus based on the consistent difficulty of the map. Multiple sections of similar difficulty, or one large section of a maintained difficulty, will slightly increase the total value. However it almost entirely ignores easier sections.
